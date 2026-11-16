@@ -57,3 +57,39 @@ func benchSumN(b *testing.B, size, count int) {
 
 func BenchmarkSumN4K(b *testing.B)   { benchSumN(b, 4096, 64) }
 func BenchmarkSumN128K(b *testing.B) { benchSumN(b, 131072, 16) }
+
+func TestSumNParallelMatchesSum(t *testing.T) {
+	rng := rand.New(rand.NewSource(9))
+	msgs := make([][]byte, 203)
+	for i := range msgs {
+		msgs[i] = make([]byte, rng.Intn(700))
+		rng.Read(msgs[i])
+	}
+	want := make([][Size]byte, len(msgs))
+	for i, m := range msgs {
+		want[i] = Sum(m)
+	}
+	for _, w := range []int{0, 1, 2, 3, 16, 1000} {
+		got := make([][Size]byte, len(msgs))
+		SumNParallel(got, msgs, w)
+		for i := range msgs {
+			if got[i] != want[i] {
+				t.Fatalf("workers %d, message %d (len %d): differs from Sum", w, i, len(msgs[i]))
+			}
+		}
+	}
+	SumNParallel(nil, nil, 4) // no message is not an error
+}
+
+func BenchmarkSumNParallel4K(b *testing.B) {
+	msgs := make([][]byte, 4096)
+	for i := range msgs {
+		msgs[i] = make([]byte, 4096)
+	}
+	dst := make([][Size]byte, len(msgs))
+	d := NewKeyed(make([]byte, 32))
+	b.SetBytes(int64(4096 * len(msgs)))
+	for i := 0; i < b.N; i++ {
+		d.SumNParallel(dst, msgs, 0)
+	}
+}

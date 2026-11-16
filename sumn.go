@@ -2,7 +2,10 @@ package edonr
 
 import (
 	"encoding/binary"
+	"runtime"
 	"sort"
+	"sync"
+	"sync/atomic"
 )
 
 // SumN stores in dst[i] the digest of msgs[i] (dst must be at least as long as
@@ -12,15 +15,22 @@ import (
 // vector registers (two with NEON; the result is the same as hashing each
 // message alone). The best case is many messages of similar length, such as
 // the blocks of a ZFS pool. d itself is not modified.
-func (d *Digest) SumN(dst [][Size]byte, msgs [][]byte) {
+func (d *Digest) SumN(dst [][Size]byte, msgs [][]byte) { d.SumNParallel(dst, msgs, 1) }
+
+// SumNParallel is SumN on up to workers goroutines (workers <= 0 means
+// GOMAXPROCS): the messages are sorted by length and handed out in groups of
+// one lane width, so every goroutine runs the multi-buffer kernel on messages
+// of similar length. The digests do not depend on workers.
+func (d *Digest) SumNParallel(dst [][Size]byte, msgs [][]byte, workers int) {
 	if len(dst) < len(msgs) {
 		panic("edonr: SumN: dst shorter than msgs")
 	}
-	if !lanesOK {
-		for i, m := range msgs {
-			dst[i] = d.sumOne(m)
-		}
-		return
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+	}
+	width := 1
+	if lanesOK {
+		width = lanes
 	}
 	// pair messages of similar length: lanes run in lockstep
 	order := make([]int, len(msgs))
@@ -28,14 +38,56 @@ func (d *Digest) SumN(dst [][Size]byte, msgs [][]byte) {
 		order[i] = i
 	}
 	sort.Slice(order, func(a, b int) bool { return len(msgs[order[a]]) < len(msgs[order[b]]) })
-	var sc laneScratch
-	i := 0
-	for ; i+lanes <= len(order); i += lanes {
-		d.sumLanes(dst, msgs, order[i:i+lanes], &sc)
+	groups := (len(order) + width - 1) / width
+	if workers > groups {
+		workers = groups
 	}
-	for ; i < len(order); i++ {
-		dst[order[i]] = d.sumOne(msgs[order[i]])
+	run := func(next func() (int, int)) {
+		var sc laneScratch
+		for g0, g1 := next(); g0 < g1; g0, g1 = next() {
+			for g := g0; g < g1; g++ {
+				idx := order[g*width : min((g+1)*width, len(order))]
+				if width > 1 && len(idx) == width {
+					d.sumLanes(dst, msgs, idx, &sc)
+					continue
+				}
+				for _, i := range idx {
+					dst[i] = d.sumOne(msgs[i])
+				}
+			}
+		}
 	}
+	if workers <= 1 {
+		done := false
+		run(func() (int, int) {
+			if done {
+				return 0, 0
+			}
+			done = true
+			return 0, groups
+		})
+		return
+	}
+	// claim a few groups at a time: cheap, and balanced when lengths differ
+	chunk := max(1, groups/(workers*8))
+	var claimed atomic.Int64
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			run(func() (int, int) {
+				g1 := int(claimed.Add(int64(chunk)))
+				return min(g1-chunk, groups), min(g1, groups)
+			})
+		}()
+	}
+	wg.Wait()
+}
+
+// SumNParallel is Digest.SumNParallel for the unkeyed hash.
+func SumNParallel(dst [][Size]byte, msgs [][]byte, workers int) {
+	New().SumNParallel(dst, msgs, workers)
 }
 
 // SumN is Digest.SumN for the unkeyed hash.
