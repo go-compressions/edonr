@@ -20,7 +20,8 @@ k.Write(block)
 blkCksum := k.Sum(nil)[:32]         // ZFS stores the first 32 bytes
 ```
 
-`Size` is 64, `BlockSize` is 128. The API is that of v0.1.0.
+`Size` is 64, `BlockSize` is 128. The API is that of v0.1.0; v0.3.0 adds
+`SumN` and `SumNParallel` (see Performance).
 
 ## Which function this is
 
