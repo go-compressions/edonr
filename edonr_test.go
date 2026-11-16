@@ -199,7 +199,7 @@ func FuzzOracle(f *testing.F) {
 		if got := Sum(msg); !bytes.Equal(got[:], want) {
 			t.Fatalf("unkeyed %x: %x want %x", msg, got, want)
 		}
-		if len(salt) == 32 {
+		{
 			wantK := oracle(t, msg, salt)
 			d := NewKeyed(salt)
 			d.Write(msg)

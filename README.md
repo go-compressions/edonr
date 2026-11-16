@@ -69,8 +69,11 @@ salts, and `FuzzOracle` fuzzes against it. Statement coverage is 100 %.
 
 ## Performance
 
-See the table in the release notes; the kernel is plain Go (eight quasigroup
-operations per block, no allocation).
+Plain Go, eight quasigroup operations per block expanded in straight-line
+generated code, no allocation: about 2.5 GB/s on one Apple M4 Max core (4 KiB
+and 128 KiB blocks), measured under a load of about 7. The OpenZFS C code
+measured 1.4 to 3.1 GB/s in the same noisy window; a clean comparison and a
+SIMD multi-buffer kernel are open work.
 
 ## License
 
