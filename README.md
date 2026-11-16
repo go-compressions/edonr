@@ -77,10 +77,18 @@ salts, and `FuzzOracle` fuzzes against it. Statement coverage is 100 %.
 ## Performance
 
 Plain Go, eight quasigroup operations per block expanded in straight-line
-generated code, no allocation: about 2.5 GB/s on one Apple M4 Max core (4 KiB
-and 128 KiB blocks), measured under a load of about 7. The OpenZFS C code
-measured 1.4 to 3.1 GB/s in the same noisy window; a clean comparison and a
-SIMD multi-buffer kernel are open work.
+generated code, no allocation. Single core, Apple M4 Max, `abbench --max-load 8`
+(8 interleaved rounds, load 7 to 8) against `edonr-oracle --bench` (the OpenZFS
+C code), via `BenchmarkOracle4K`/`BenchmarkOracle128K` (`EDONR_ORACLE` set):
+
+| block   | Go (scalar) | OpenZFS C | Go / C |
+|---------|-------------|-----------|--------|
+| 4 KiB   | 3.38 GB/s   | 4.90 GB/s | 0.69   |
+| 128 KiB | 3.53 GB/s   | 5.08 GB/s | 0.69   |
+
+The scalar Go kernel is therefore 44 % slower than C: an open defect. A SIMD
+multi-buffer kernel (several independent blocks per vector register) and
+multi-core hashing of many blocks are not implemented yet.
 
 ## License
 
