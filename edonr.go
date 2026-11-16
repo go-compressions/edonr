@@ -22,7 +22,7 @@
 // black box and is documented on NewKeyed.
 package edonr
 
-//go:generate sh -c "go run ./internal/gen > edonr_compress.go"
+//go:generate go run ./internal/gen
 
 import (
 	"encoding/binary"
@@ -41,8 +41,11 @@ const (
 	constY = 0x5555555555555555
 )
 
-// state is the double pipe: two vectors of eight 64-bit words.
-type state [16]uint64
+// state is the double pipe: two vectors of eight 64-bit words, and a scratch
+// word that compress stores to between the phases of a block (see the
+// generator): the store makes the compiler reload message words rather than
+// keep them live in registers. It carries no value.
+type state [17]uint64
 
 // initial is P(0) for Edon-R 512 (Table 1.6): the bytes 0x80..0xFF as
 // consecutive big-endian-written 64-bit words.

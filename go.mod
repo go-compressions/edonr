@@ -1,3 +1,5 @@
 module github.com/go-compressions/edonr
 
-go 1.24
+go 1.26.0
+
+require golang.org/x/sys v0.50.0
