@@ -52,6 +52,13 @@ Written from these documents only; the section numbers are those cited in
 - D. Gligoroski et al., *Cryptographic hash function EDON-R′*, 2009 (UKIM
   repository, IEEE 05683046), Table 6: the feedback.
 
+Two things in the record are not perfectly clean and are stated here: the
+`testdata/openzfs-2.3.0-vectors.txt` file was first committed in v0.1.0 and is
+output of the OpenZFS binary (digests, which are facts, not code), and a
+comment in go-filesystems/zfs describing the keyed form as a "double-hashed salt
+block" was seen before the keyed construction was probed; the construction
+itself was found and verified only through oracle queries.
+
 The OpenZFS 2.3.0 implementation was used only as a black box: a compiled
 oracle binary that prints a digest for a given input (and salt). No source of
 OpenZFS, of v0.1.0 of this module, or of any other Edon-R implementation was
