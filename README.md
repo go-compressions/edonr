@@ -29,7 +29,7 @@ feedback term. The OpenZFS output is Edon-R′: the compression step is
 `P(i) = R(P(i-1), M(i)) xor P(i-1) xor swapped(M(i))`. This was not known in
 advance; the unkeyed digests of the submission document do not match OpenZFS,
 the feedback form matches on every vector (273 unkeyed lengths up to 64 KiB, and
-millions of fuzzed inputs).
+a clean 30 s differential fuzz against the oracle, salts of any length).
 
 The keyed form is not part of the specification. Black-box queries show that the
 digest for a salt `s` and message `m` is the unkeyed digest of
