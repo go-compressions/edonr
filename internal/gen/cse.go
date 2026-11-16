@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"math/rand"
 	"sort"
 )
@@ -88,21 +87,4 @@ func bestPlan(nvars int, sets [][]int) ([]step, []int) {
 		}
 	}
 	return bs, br
-}
-
-// emit writes the steps with names derived from vars and returns the
-// expression (a name) of every set.
-func emit(tag string, vars []string, op string, sets [][]int) []string {
-	steps, res := bestPlan(len(vars), sets)
-	names := append([]string(nil), vars...)
-	for i, st := range steps {
-		n := fmt.Sprintf("%s_%d", tag, i)
-		p("%s := %s %s %s", n, names[st.a], op, names[st.b])
-		names = append(names, n)
-	}
-	out := make([]string, len(res))
-	for i, r := range res {
-		out[i] = names[r]
-	}
-	return out
 }
