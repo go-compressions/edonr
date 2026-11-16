@@ -1,197 +1,53 @@
 package main
 
-import (
-	"bytes"
-	"fmt"
-)
+import "fmt"
 
-// neonKernel prints compress2: the compression function over two independent
-// messages, one per 64-bit lane of the vector registers. The state is held
-// word-major, lane-minor ([16][2]uint64). The three-input xor is EOR3 and a
-// rotation is XAR against a zero register (the SHA3 extension, mandatory from
-// Armv8.4 and present on every Apple core and Neoverse).
-//
-// Registers V0..V28 are allocated by next-use distance (the furthest is
-// evicted); V29 is zero, V30 and V31 hold the two affine constants. Message
-// words are transposed into a staging area once per block pair and loaded
-// from there as often as needed, so they never need a spill slot.
-func neonKernel(g *prog) (asm []byte, scratch int) {
-	const nregs = 29
-	const stage = 256 // bytes: 16 words x 2 lanes x 8
-	n := len(g.ins)
-
-	// last use and use lists (instruction indices) of every value
-	uses := make([][]int, n)
-	for i, in := range g.ins {
-		for _, o := range operands(in) {
-			uses[o] = append(uses[o], i)
-		}
-	}
-	nextUse := func(v, after int) int {
-		for _, u := range uses[v] {
-			if u > after {
-				return u
+// neon is two messages at a time. The three-input xor is EOR3 and a rotation
+// is XAR against a zero register (the SHA3 extension, mandatory from Armv8.4
+// and present on every Apple core). V29 is zero, V30 and V31 hold the affine
+// constants.
+func neon() *isa {
+	v := func(r int) string { return fmt.Sprintf("V%d", r) }
+	return &isa{
+		name: "neon", build: "//go:build arm64 && !purego", nregs: 29, vb: 16, lanes: 2,
+		state: "R0", scratch: "R4", fn: "compress2", frame: "$0-40",
+		sig: "// func compress2(s *state2, a, b *byte, n int, scratch *[neonScratch]byte)",
+		ld:  func(base string, off, r int) string { return fmt.Sprintf("FMOVQ %d(%s), F%d", off, base, r) },
+		st:  func(r int, base string, off int) string { return fmt.Sprintf("FMOVQ F%d, %d(%s)", r, off, base) },
+		op: func(k kind, d int, s []int, n int) []string {
+			switch k {
+			case kAdd:
+				return []string{fmt.Sprintf("VADD %s.D2, %s.D2, %s.D2", v(s[1]), v(s[0]), v(d))}
+			case kAddC:
+				return []string{fmt.Sprintf("VADD V%d.D2, %s.D2, %s.D2", 30+n, v(s[0]), v(d))}
+			case kXor:
+				return []string{fmt.Sprintf("VEOR %s.B16, %s.B16, %s.B16", v(s[1]), v(s[0]), v(d))}
+			case kXor3:
+				return []string{fmt.Sprintf("VEOR3 %s.B16, %s.B16, %s.B16, %s.B16", v(s[2]), v(s[1]), v(s[0]), v(d))}
+			case kRot:
+				return []string{fmt.Sprintf("VXAR $%d, V29.D2, %s.D2, %s.D2", 64-n, v(s[0]), v(d))}
 			}
-		}
-		return 1 << 30
-	}
-	remat := func(v int) bool { k := g.ins[v].k; return k == kLoadM || k == kLoadS }
-
-	var body bytes.Buffer
-	e := func(f string, a ...any) { fmt.Fprintf(&body, "\t"+f+"\n", a...) }
-
-	reg := make([]int, n) // register of a value, -1 if none
-	slot := make([]int, n)
-	for i := range reg {
-		reg[i], slot[i] = -1, -1
-	}
-	var owner [nregs]int
-	for i := range owner {
-		owner[i] = -1
-	}
-	nslots, freeSlots := 0, []int{}
-
-	loadInto := func(v, r int) {
-		in := g.ins[v]
-		switch {
-		case in.k == kLoadM:
-			e("FMOVQ %d(R4), F%d", 16*in.n, r)
-		case in.k == kLoadS:
-			e("FMOVQ %d(R0), F%d", 16*in.n, r)
-		default:
-			e("FMOVQ %d(R4), F%d", stage+16*slot[v], r)
-		}
-	}
-	evict := func(r int, pinned map[int]bool, at int) {
-		v := owner[r]
-		if v >= 0 && nextUse(v, at) < 1<<30 && !remat(v) && slot[v] < 0 {
-			if len(freeSlots) > 0 {
-				slot[v], freeSlots = freeSlots[len(freeSlots)-1], freeSlots[:len(freeSlots)-1]
-			} else {
-				slot[v] = nslots
-				nslots++
+			panic("neon op")
+		},
+		prologue: func() []string {
+			return []string{
+				"MOVD s+0(FP), R0", "MOVD a+8(FP), R1", "MOVD b+16(FP), R2", "MOVD n+24(FP), R3", "MOVD scratch+32(FP), R4",
+				"VEOR V29.B16, V29.B16, V29.B16",
+				"MOVD $0xAAAAAAAAAAAAAAAA, R5", "VDUP R5, V30.D2",
+				"MOVD $0x5555555555555555, R5", "VDUP R5, V31.D2",
 			}
-			e("FMOVQ F%d, %d(R4)", r, stage+16*slot[v])
-		}
-		if v >= 0 {
-			reg[v] = -1
-		}
-		owner[r] = -1
+		},
+		stage: func() (l []string) {
+			// lane 0 from a, lane 1 from b
+			for j := 0; j < 8; j++ {
+				l = append(l, fmt.Sprintf("FMOVQ %d(R1), F0", 16*j), fmt.Sprintf("FMOVQ %d(R2), F1", 16*j),
+					"VZIP1 V1.D2, V0.D2, V2.D2", "VZIP2 V1.D2, V0.D2, V3.D2",
+					fmt.Sprintf("FMOVQ F2, %d(R4)", 32*j), fmt.Sprintf("FMOVQ F3, %d(R4)", 32*j+16))
+			}
+			return
+		},
+		advance: func() []string {
+			return []string{"ADD $128, R1", "ADD $128, R2", "SUBS $1, R3", "BNE loop", "RET"}
+		},
 	}
-	// grab returns a register for a new value at instruction at.
-	grab := func(pinned map[int]bool, at int) int {
-		best, bestUse := -1, -1
-		for r := 0; r < nregs; r++ {
-			if pinned[r] {
-				continue
-			}
-			if owner[r] < 0 {
-				return r
-			}
-			if u := nextUse(owner[r], at); u > bestUse {
-				best, bestUse = r, u
-			}
-		}
-		evict(best, pinned, at)
-		return best
-	}
-
-	for i, in := range g.ins {
-		if in.k == kBarrier {
-			continue
-		}
-		pinned := map[int]bool{}
-		ops := operands(in)
-		for _, o := range ops {
-			if reg[o] < 0 {
-				r := grab(pinned, i)
-				loadInto(o, r)
-				reg[o], owner[r] = r, o
-			}
-			pinned[reg[o]] = true
-		}
-		R := func(o int) string { return fmt.Sprintf("V%d", reg[o]) }
-		if in.k == kStoreS {
-			e("FMOVQ F%d, %d(R0)", reg[in.a], 16*in.n)
-		}
-		// operands whose last use is here free their registers before the
-		// destination is chosen, so the destination may reuse one
-		last := map[int]bool{}
-		for _, o := range ops {
-			if nextUse(o, i) == 1<<30 {
-				last[o] = true
-			}
-		}
-		var d int
-		if in.k != kStoreS {
-			for o := range last {
-				// the operand's register is the destination's to take
-				owner[reg[o]] = -1
-				delete(pinned, reg[o])
-			}
-			d = grab(pinned, i)
-		}
-		switch in.k {
-		case kLoadM, kLoadS:
-			loadInto(i, d)
-		case kAdd:
-			e("VADD %s.D2, %s.D2, V%d.D2", R(in.b), R(in.a), d)
-		case kAddC:
-			e("VADD V%d.D2, %s.D2, V%d.D2", 30+in.n, R(in.a), d)
-		case kXor:
-			e("VEOR %s.B16, %s.B16, V%d.B16", R(in.b), R(in.a), d)
-		case kXor3:
-			e("VEOR3 %s.B16, %s.B16, %s.B16, V%d.B16", R(in.c), R(in.b), R(in.a), d)
-		case kRot:
-			e("VXAR $%d, V29.D2, %s.D2, V%d.D2", 64-in.n, R(in.a), d)
-		}
-		for _, o := range ops {
-			if last[o] {
-				reg[o] = -1
-				if slot[o] >= 0 {
-					freeSlots = append(freeSlots, slot[o])
-					slot[o] = -1
-				}
-			}
-		}
-		if in.k != kStoreS {
-			reg[i], owner[d] = d, i
-		}
-	}
-
-	var out bytes.Buffer
-	fmt.Fprintf(&out, "// Code generated by internal/gen; DO NOT EDIT.\n\n")
-	fmt.Fprintf(&out, "//go:build arm64 && !purego\n\n")
-	fmt.Fprintf(&out, "#include \"textflag.h\"\n\n")
-	fmt.Fprintf(&out, "// func compress2(s *state2, a, b *byte, n int, scratch *[neonScratch]byte)\n")
-	fmt.Fprintf(&out, "TEXT ·compress2(SB), NOSPLIT, $0-40\n")
-	fmt.Fprintf(&out, "\tMOVD s+0(FP), R0\n\tMOVD a+8(FP), R1\n\tMOVD b+16(FP), R2\n\tMOVD n+24(FP), R3\n\tMOVD scratch+32(FP), R4\n")
-	fmt.Fprintf(&out, "\tVEOR V29.B16, V29.B16, V29.B16\n")
-	fmt.Fprintf(&out, "\tMOVD $0xAAAAAAAAAAAAAAAA, R5\n\tVDUP R5, V30.D2\n")
-	fmt.Fprintf(&out, "\tMOVD $0x5555555555555555, R5\n\tVDUP R5, V31.D2\n")
-	fmt.Fprintf(&out, "loop:\n")
-	// transpose the two blocks into the staging area: lane 0 from a, lane 1 from b
-	for j := 0; j < 8; j++ {
-		fmt.Fprintf(&out, "\tFMOVQ %d(R1), F0\n\tFMOVQ %d(R2), F1\n", 16*j, 16*j)
-		fmt.Fprintf(&out, "\tVZIP1 V1.D2, V0.D2, V2.D2\n\tVZIP2 V1.D2, V0.D2, V3.D2\n")
-		fmt.Fprintf(&out, "\tFMOVQ F2, %d(R4)\n\tFMOVQ F3, %d(R4)\n", 32*j, 32*j+16)
-	}
-	out.Write(body.Bytes())
-	fmt.Fprintf(&out, "\tADD $128, R1\n\tADD $128, R2\n\tSUBS $1, R3\n\tBNE loop\n\tRET\n")
-	return out.Bytes(), stage + 16*nslots
-}
-
-func operands(in instr) []int {
-	switch in.k {
-	case kAdd, kXor:
-		if in.a == in.b {
-			return []int{in.a}
-		}
-		return []int{in.a, in.b}
-	case kAddC, kRot, kStoreS:
-		return []int{in.a}
-	case kXor3:
-		return []int{in.a, in.b, in.c}
-	}
-	return nil
 }

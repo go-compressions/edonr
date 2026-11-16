@@ -4,5 +4,5 @@
 
 package edonr
 
-// neonScratch is the size of the staging and spill area of compress2.
+// neonScratch is the size of the staging and spill area of its kernel.
 const neonScratch = 368

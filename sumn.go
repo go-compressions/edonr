@@ -56,9 +56,9 @@ type segment []byte
 // sumLanes hashes msgs[idx[l]] in lane l.
 func (d *Digest) sumLanes(dst [][Size]byte, msgs [][]byte, idx []int, sc *laneScratch) {
 	var v state2
-	var st [lanes]state
-	var tails [lanes][2 * BlockSize]byte
-	var segs [lanes][2]segment
+	var st [maxLanes]state
+	var tails [maxLanes][2 * BlockSize]byte
+	var segs [maxLanes][2]segment
 	for l := 0; l < lanes; l++ {
 		m := msgs[idx[l]]
 		full := len(m) / BlockSize
@@ -74,13 +74,13 @@ func (d *Digest) sumLanes(dst [][Size]byte, msgs [][]byte, idx []int, sc *laneSc
 		segs[l] = [2]segment{m[:full*BlockSize], t[:end]}
 		st[l] = d.start
 		for j := 0; j < 16; j++ {
-			v[j][l] = st[l][j]
+			v[j*lanes+l] = st[l][j]
 		}
 	}
 	// lockstep while every lane has blocks left
 	for {
 		n := -1
-		var p [lanes]*byte
+		var p [maxLanes]*byte
 		for l := 0; l < lanes; l++ {
 			for len(segs[l][0]) == 0 && len(segs[l][1]) > 0 {
 				segs[l][0], segs[l][1] = segs[l][1], nil
@@ -104,7 +104,7 @@ func (d *Digest) sumLanes(dst [][Size]byte, msgs [][]byte, idx []int, sc *laneSc
 	// a lane that still has blocks finishes alone
 	for l := 0; l < lanes; l++ {
 		for j := 0; j < 16; j++ {
-			st[l][j] = v[j][l]
+			st[l][j] = v[j*lanes+l]
 		}
 		for _, sg := range segs[l] {
 			for ; len(sg) >= BlockSize; sg = sg[BlockSize:] {

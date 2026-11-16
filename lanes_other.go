@@ -1,13 +1,17 @@
-//go:build !(arm64 && !purego)
+//go:build !((arm64 || amd64) && !purego)
 
 package edonr
 
+const maxLanes = 1
+
+type state2 [16 * maxLanes]uint64
+
 const lanes = 1
 
-var lanesOK = false
-
-type state2 [16][lanes]uint64
+const lanesOK = false
 
 type laneScratch [1]byte
 
-func compressLanes(*state2, *[lanes]*byte, int, *laneScratch) { panic("edonr: no multi-buffer kernel") }
+func compressLanes(*state2, *[maxLanes]*byte, int, *laneScratch) {
+	panic("edonr: no multi-buffer kernel")
+}
