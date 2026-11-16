@@ -74,14 +74,14 @@ jobs:
         run: docker run --rm --platform linux/s390x -v "$PWD:/src:ro" -w /src debian:trixie /src/edonr.test -test.v
 
   # The AVX-512 kernel needs a runner that has AVX-512 (GitHub's x86 runners
-  # vary); EDONR_REQUIRE_LANES=8 makes the test fail rather than skip when the
-  # CPU lacks it, so a green job means the kernel ran, every lane compared with
-  # the scalar path. The job reports a runner without AVX-512 as a failure
-  # of the precondition, not as a pass.
+  # vary). When the runner has it, the job is BLOCKING and EDONR_REQUIRE_LANES=8
+  # makes the test fail rather than skip, every lane compared with the scalar
+  # path. When it lacks it the AVX-512 step is skipped, loudly (a warning
+  # annotation and a line in the log), and only the AVX2 width is required.
+  # Intel SDE would make it run everywhere: see the tracker.
   avx512:
     name: AVX-512 and AVX2 kernels
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -89,6 +89,15 @@ jobs:
           go-version: '1.27.x'
           check-latest: true
       - name: CPU
-        run: grep -m1 'model name' /proc/cpuinfo; grep -m1 -o 'avx512f' /proc/cpuinfo || echo "no avx512f on this runner"
+        id: cpu
+        run: |
+          grep -m1 'model name' /proc/cpuinfo
+          if grep -q -m1 -w avx512f /proc/cpuinfo; then
+            echo "require=8" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=AVX-512 kernel NOT tested::this runner has no avx512f; only AVX2 is exercised"
+            echo "SKIPPED: no avx512f on this runner, the AVX-512 kernel was not run"
+            echo "require=4" >> "$GITHUB_OUTPUT"
+          fi
       - name: forced-dispatch tests of every lane width
-        run: EDONR_REQUIRE_LANES=8 go test -count=1 -v -run 'LaneWidths|Lanes|SumN' .
+        run: EDONR_REQUIRE_LANES=${{ steps.cpu.outputs.require }} go test -count=1 -v -run 'LaneWidths|Lanes|SumN' .
