@@ -1,11 +1,12 @@
 package edonr
 
 import (
+	"context"
 	"encoding/binary"
 	"runtime"
 	"sort"
-	"sync"
-	"sync/atomic"
+
+	"github.com/go-filesystems/inflight"
 )
 
 // SumN stores in dst[i] the digest of msgs[i] (dst must be at least as long as
@@ -59,48 +60,35 @@ func (d *Digest) SumNParallel(dst [][Size]byte, msgs [][]byte, workers int) {
 		}
 		return r + (g-1)*width, r + g*width
 	}
-	run := func(next func() (int, int)) {
+	run := func(g0, g1 int) {
 		var sc laneScratch
-		for g0, g1 := next(); g0 < g1; g0, g1 = next() {
-			for g := g0; g < g1; g++ {
-				lo, hi := bounds(g)
-				idx := order[lo:hi]
-				if width > 1 && len(idx) == width {
-					d.sumLanes(dst, msgs, idx, &sc)
-					continue
-				}
-				for _, i := range idx {
-					dst[i] = d.sumOne(msgs[i])
-				}
+		for g := g0; g < g1; g++ {
+			lo, hi := bounds(g)
+			idx := order[lo:hi]
+			if width > 1 && len(idx) == width {
+				d.sumLanes(dst, msgs, idx, &sc)
+				continue
+			}
+			for _, i := range idx {
+				dst[i] = d.sumOne(msgs[i])
 			}
 		}
 	}
 	if workers <= 1 {
-		done := false
-		run(func() (int, int) {
-			if done {
-				return 0, 0
-			}
-			done = true
-			return 0, groups
-		})
+		run(0, groups)
 		return
 	}
-	// claim a few groups at a time: cheap, and balanced when lengths differ
-	chunk := max(1, groups/(workers*8))
-	var claimed atomic.Int64
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			run(func() (int, int) {
-				g1 := int(claimed.Add(int64(chunk)))
-				return min(g1-chunk, groups), min(g1, groups)
-			})
-		}()
-	}
-	wg.Wait()
+	// The scheduling is the fleet's: inflight.Ordered runs the chunks on a
+	// bounded set of goroutines. Each chunk writes its own digests into dst, so
+	// there is nothing to emit; a chunk is a few groups, to amortise the
+	// scheduling and stay balanced when lengths differ.
+	chunk := max(1, groups/(workers*2))
+	items := (groups + chunk - 1) / chunk
+	_ = inflight.Ordered(context.Background(), items, workers,
+		func(_ context.Context, i int) (struct{}, error) {
+			run(i*chunk, min((i+1)*chunk, groups))
+			return struct{}{}, nil
+		}, func(int, struct{}) error { return nil })
 }
 
 // SumNParallel is Digest.SumNParallel for the unkeyed hash.

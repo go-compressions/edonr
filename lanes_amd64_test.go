@@ -3,6 +3,8 @@
 package edonr
 
 import (
+	"os"
+	"strconv"
 	"testing"
 
 	"golang.org/x/sys/cpu"
@@ -15,6 +17,9 @@ func TestLaneWidths(t *testing.T) {
 	defer func() { lanes, lanesOK = saved, savedOK }()
 	for _, w := range []int{4, 8} {
 		if w == 4 && !cpu.X86.HasAVX2 || w == 8 && !cpu.X86.HasAVX512F {
+			if os.Getenv("EDONR_REQUIRE_LANES") == strconv.Itoa(w) {
+				t.Fatalf("EDONR_REQUIRE_LANES=%d but this CPU has no such kernel", w)
+			}
 			continue
 		}
 		lanes, lanesOK = w, true
