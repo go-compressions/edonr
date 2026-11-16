@@ -20,6 +20,7 @@ func TestLaneWidths(t *testing.T) {
 			if os.Getenv("EDONR_REQUIRE_LANES") == strconv.Itoa(w) {
 				t.Fatalf("EDONR_REQUIRE_LANES=%d but this CPU has no such kernel", w)
 			}
+			t.Logf("SKIPPED: the %d-lane kernel was not run, this CPU lacks it", w)
 			continue
 		}
 		lanes, lanesOK = w, true
