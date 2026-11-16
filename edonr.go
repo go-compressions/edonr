@@ -1,3 +1,34 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://opensource.org/licenses/CDDL-1.0.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+
+/*
+ * Based on Edon-R implementation for SUPERCOP, based on NIST API.
+ * Copyright (c) 2009, 2010, Jørn Amundsen <jorn.amundsen@ntnu.no>
+ * Copyright (c) 2013 Saso Kiselkov, All rights reserved
+ * Copyright (c) 2023 Tino Reichardt <milky-zfs@mcmilk.de>
+ *
+ * Go port: modified by the go-compressions authors (2026), see the Git
+ * history for the changes.
+ */
+
 // Package edonr implements the Edon-R 512 hash in pure Go, as OpenZFS uses it
 // for the edonr checksum.
 //
@@ -43,13 +74,18 @@ type Digest struct {
 	nBytes uint64     // bytes compressed so far (bits_processed / 8)
 	last   [BlockSize]byte
 	nLast  int
+
+	// start is the state Reset returns to: the initial pipe for New, the
+	// state after the salt block for NewKeyed.
+	start      [16]uint64
+	startBytes uint64
 }
 
 var _ hash.Hash = (*Digest)(nil)
 
 // New returns an unkeyed Edon-R 512 digest (EdonRInit).
 func New() *Digest {
-	d := &Digest{}
+	d := &Digest{start: i512p2}
 	d.Reset()
 	return d
 }
@@ -57,7 +93,9 @@ func New() *Digest {
 // NewKeyed returns the ZFS checksum template for a 32-byte pool salt:
 // the salt block H(salt) || H(H(salt)) is fed to a fresh state, which then
 // serves as the MAC key (abd_checksum_edonr_tmpl_init, edonr_zfs.c:78-104).
-// Take the first 32 bytes of Sum as the zio_cksum_t.
+// Take the first 32 bytes of Sum as the zio_cksum_t. ZFS salts are 32 bytes
+// (zio_cksum_salt_t); other lengths are hashed the same way but match no
+// pool. Reset returns to the keyed state.
 func NewKeyed(salt []byte) *Digest {
 	var sb [BlockSize]byte
 	h := Sum(salt)
@@ -66,6 +104,7 @@ func NewKeyed(salt []byte) *Digest {
 	copy(sb[Size:], h[:])
 	d := New()
 	d.Write(sb[:])
+	d.start, d.startBytes = d.p, d.nBytes
 	return d
 }
 
@@ -80,8 +119,8 @@ func Sum(data []byte) [Size]byte {
 
 // Reset is EdonRInit, edonr.c:211-217.
 func (d *Digest) Reset() {
-	d.p = i512p2
-	d.nBytes = 0
+	d.p = d.start
+	d.nBytes = d.startBytes
 	d.nLast = 0
 }
 

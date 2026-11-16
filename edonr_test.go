@@ -86,8 +86,8 @@ func TestStreamingResetClone(t *testing.T) {
 		}
 		d.Reset()
 		d.Write(m)
-		if bytes.Equal(d.Sum(nil), want) {
-			t.Fatal("Reset must drop the key")
+		if !bytes.Equal(d.Sum(nil), want) {
+			t.Fatal("Reset must return to the keyed state")
 		}
 	}
 	if whole.Size() != 64 || whole.BlockSize() != 128 {
