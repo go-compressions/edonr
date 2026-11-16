@@ -27,4 +27,4 @@ every line is checked by `go test`.
 
 Single core, Apple M4 Max, keyed, from a cloned template, OpenZFS C compiled
 with `clang -O2`: C 3.5-3.7 GB/s, this package 1.2-1.7 GB/s. The gap is open
-(tracked in an issue); the checksum is verified on read only.
+(tracked in #2); the checksum is verified on read only.
