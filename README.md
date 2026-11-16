@@ -72,23 +72,43 @@ arrangement of the halves entering R, and the keyed construction).
 260, around every block boundary and up to 64 KiB, unkeyed and salted. With the
 environment variable `EDONR_ORACLE` set to the oracle binary, `go test` also
 runs a differential test over lengths up to 5 MiB with random messages and random
-salts, and `FuzzOracle` fuzzes against it. Statement coverage is 100 %.
-
+salts, and `FuzzOracle` fuzzes against it.
 ## Performance
 
-Plain Go, eight quasigroup operations per block expanded in straight-line
-generated code, no allocation. Single core, Apple M4 Max, `abbench --max-load 8`
-(8 interleaved rounds, load 7 to 8) against `edonr-oracle --bench` (the OpenZFS
-C code), via `BenchmarkOracle4K`/`BenchmarkOracle128K` (`EDONR_ORACLE` set):
+The compression function is generated (`internal/gen`) from one dataflow
+description: the many 5-term sums and 3-term xors of the quasigroup operation
+share partial results, and message words are reloaded rather than kept live
+(a store to a scratch state word stops the compiler sharing the loads).
+Pure-Go scalar code, no allocation.
 
-| block   | Go (scalar) | OpenZFS C | Go / C |
-|---------|-------------|-----------|--------|
-| 4 KiB   | 3.38 GB/s   | 4.90 GB/s | 0.69   |
-| 128 KiB | 3.53 GB/s   | 5.08 GB/s | 0.69   |
+Many independent messages (the blocks of a ZFS pool) are hashed together:
 
-The scalar Go kernel is therefore 44 % slower than C: an open defect. A SIMD
-multi-buffer kernel (several independent blocks per vector register) and
-multi-core hashing of many blocks are not implemented yet.
+```go
+dst := make([][edonr.Size]byte, len(blocks))
+k.SumN(dst, blocks)                 // lanes of the vector registers
+k.SumNParallel(dst, blocks, 0)      // and every core (0 = GOMAXPROCS)
+```
+
+`SumN` sorts the messages by length and runs 2 (NEON, needs the SHA3
+extension), 4 (AVX2) or 8 (AVX-512) of them in lockstep in generated assembly
+(EOR3/XAR, VPROLQ/VPTERNLOGQ); the digests are those of `Sum`, checked with mixed
+lengths per lane. The width is chosen at run time.
+
+Single core, Apple M4 Max, `abbench --max-load 8` (6 interleaved rounds)
+against `edonr-oracle --bench` (the OpenZFS C code), via
+`BenchmarkOracle4K`/`128K` (`EDONR_ORACLE` set):
+
+| block   | OpenZFS C | Go scalar | Go `SumN` (NEON x2) | scalar / C | `SumN` / C |
+|---------|-----------|-----------|---------------------|------------|------------|
+| 4 KiB   | 4.95 GB/s | 4.39 GB/s | 5.62 GB/s           | 0.89       | 1.13       |
+| 128 KiB | 5.18 GB/s | 4.61 GB/s | 6.16 GB/s           | 0.89       | 1.19       |
+
+`SumNParallel` on the 16 cores of the M4 Max reaches 44 GB/s (4 KiB blocks). On
+an AMD Ryzen 9 7950X (no C oracle available there): scalar 2.7 GB/s, AVX2 x4
+5.7 GB/s, AVX-512 x8 11.6 GB/s per core.
+
+The one-message scalar path is still 11 % behind C on arm64 (open, #2);
+multi-buffer hashing is ahead of it.
 
 ## License
 

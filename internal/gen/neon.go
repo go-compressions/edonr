@@ -3,8 +3,8 @@ package main
 import "fmt"
 
 // neon is two messages at a time. The three-input xor is EOR3 and a rotation
-// is XAR against a zero register (the SHA3 extension, mandatory from Armv8.4
-// and present on every Apple core). V29 is zero, V30 and V31 hold the affine
+// is XAR against a zero register (the optional SHA3 extension, present on
+// every Apple M-series core; the caller checks for it). V29 is zero, V30 and V31 hold the affine
 // constants.
 func neon() *isa {
 	v := func(r int) string { return fmt.Sprintf("V%d", r) }

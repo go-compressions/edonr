@@ -48,6 +48,19 @@ func (a *isa) kernel(g *prog) (asm []byte, scratch int) {
 		}
 		return 1 << 30
 	}
+	// state words are reloaded from memory on demand: that is only valid while
+	// no store to the state has happened yet
+	firstStore := n
+	for i, in := range g.ins {
+		if in.k == kStoreS && i < firstStore {
+			firstStore = i
+		}
+	}
+	for v, us := range uses {
+		if g.ins[v].k == kLoadS && len(us) > 0 && us[len(us)-1] > firstStore {
+			panic("gen: a state word is read after the first store to the state")
+		}
+	}
 	remat := func(v int) bool { k := g.ins[v].k; return k == kLoadM || k == kLoadS }
 
 	var body []string

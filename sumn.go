@@ -12,7 +12,7 @@ import (
 // msgs), starting from the same state as a fresh digest: unkeyed for New,
 // keyed for NewKeyed. The messages are independent, so on CPUs with a
 // multi-buffer kernel several of them are hashed at once in the lanes of the
-// vector registers (two with NEON; the result is the same as hashing each
+// vector registers (2 with NEON, 4 with AVX2, 8 with AVX-512; the result is the same as hashing each
 // message alone). The best case is many messages of similar length, such as
 // the blocks of a ZFS pool. d itself is not modified.
 func (d *Digest) SumN(dst [][Size]byte, msgs [][]byte) { d.SumNParallel(dst, msgs, 1) }
@@ -37,16 +37,34 @@ func (d *Digest) SumNParallel(dst [][Size]byte, msgs [][]byte, workers int) {
 	for i := range order {
 		order[i] = i
 	}
-	sort.Slice(order, func(a, b int) bool { return len(msgs[order[a]]) < len(msgs[order[b]]) })
-	groups := (len(order) + width - 1) / width
+	if width > 1 {
+		sort.Slice(order, func(a, b int) bool { return len(msgs[order[a]]) < len(msgs[order[b]]) })
+	}
+	// the incomplete group, if any, is the first one: the shortest messages
+	// are the cheapest to hash without the kernel
+	r := len(order) % width
+	groups := len(order) / width
+	if r > 0 {
+		groups++
+	}
 	if workers > groups {
 		workers = groups
+	}
+	bounds := func(g int) (int, int) {
+		if r == 0 {
+			return g * width, (g + 1) * width
+		}
+		if g == 0 {
+			return 0, r
+		}
+		return r + (g-1)*width, r + g*width
 	}
 	run := func(next func() (int, int)) {
 		var sc laneScratch
 		for g0, g1 := next(); g0 < g1; g0, g1 = next() {
 			for g := g0; g < g1; g++ {
-				idx := order[g*width : min((g+1)*width, len(order))]
+				lo, hi := bounds(g)
+				idx := order[lo:hi]
 				if width > 1 && len(idx) == width {
 					d.sumLanes(dst, msgs, idx, &sc)
 					continue

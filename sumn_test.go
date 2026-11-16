@@ -15,7 +15,7 @@ func TestSumNMatchesSum(t *testing.T) {
 	keyed := NewKeyed(salt)
 	special := []int{0, 1, 119, 120, 121, 127, 128, 129, 247, 248, 255, 256, 257, 383, 384, 4096, 16384}
 	for round := 0; round < 60; round++ {
-		n := 1 + rng.Intn(9)
+		n := 1 + rng.Intn(21)
 		msgs := make([][]byte, n)
 		for i := range msgs {
 			l := rng.Intn(1500)
