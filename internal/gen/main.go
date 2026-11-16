@@ -1,6 +1,8 @@
 // Command gen writes edonr_compress.go: the compression function with the
 // eight quasigroup operations of Table 2.2 expanded in straight-line code, so
-// that the whole block runs in registers.
+// that the whole block runs in registers. The many 5-term sums and 3-term xors
+// of the operation share their partial results (see cse.go), which removes
+// about half of the additions a literal transcription performs.
 //
 //	go run ./internal/gen > edonr_compress.go
 package main
@@ -28,41 +30,40 @@ func names(pre string) [8]string {
 // q expands Z = X * Y (Table 2.2) with the operands x and y and result z.
 // tag makes the temporaries unique.
 func q(tag string, x, y, z [8]string) {
-	t := func(i int) string { return fmt.Sprintf("%s_t%d", tag, i) }
-	sum := func(v [8]string, idx ...int) string {
-		s := ""
-		for i, k := range idx {
-			if i > 0 {
-				s += " + "
-			}
-			s += v[k]
+	// X side: t0 = constX + a 5-sum; t1..t7 = rotated 5-sums.
+	xs := [][]int{{0, 1, 2, 4, 7}, {0, 1, 3, 4, 7}, {0, 1, 4, 6, 7}, {2, 3, 5, 6, 7}, {1, 2, 3, 5, 6}, {0, 2, 3, 4, 5}, {0, 1, 5, 6, 7}, {2, 3, 4, 5, 6}}
+	rx := []int{0, 5, 15, 22, 31, 40, 50, 59}
+	xv := emit(tag+"s", x[:], "+", xs)
+	t := make([]string, 8)
+	for i := range t {
+		t[i] = fmt.Sprintf("%s_t%d", tag, i)
+		if i == 0 {
+			p("%s := %s + constX", t[i], xv[i])
+		} else {
+			p("%s := bits.RotateLeft64(%s, %d)", t[i], xv[i], rx[i])
 		}
-		return s
 	}
-	p("%s := constX + %s", t(0), sum(x, 0, 1, 2, 4, 7))
-	xs := [][]int{{0, 1, 3, 4, 7}, {0, 1, 4, 6, 7}, {2, 3, 5, 6, 7}, {1, 2, 3, 5, 6}, {0, 2, 3, 4, 5}, {0, 1, 5, 6, 7}, {2, 3, 4, 5, 6}}
-	rx := []int{5, 15, 22, 31, 40, 50, 59}
-	for i := range xs {
-		p("%s := bits.RotateLeft64(%s, %d)", t(i+1), sum(x, xs[i]...), rx[i])
+	x3 := [][]int{{3, 5, 6}, {2, 5, 6}, {2, 3, 5}, {0, 1, 4}, {0, 4, 7}, {1, 6, 7}, {2, 3, 4}, {0, 1, 7}}
+	tx := emit(tag+"x", t, "^", x3)
+	// Y side.
+	ys := [][]int{{0, 1, 2, 5, 7}, {0, 1, 3, 4, 6}, {0, 1, 2, 3, 5}, {2, 3, 4, 6, 7}, {0, 1, 3, 4, 5}, {2, 4, 5, 6, 7}, {1, 2, 5, 6, 7}, {0, 3, 4, 6, 7}}
+	ry := []int{0, 10, 19, 29, 36, 44, 48, 55}
+	yv := emit(tag+"v", y[:], "+", ys)
+	u := make([]string, 8)
+	for i := range u {
+		u[i] = fmt.Sprintf("%s_u%d", tag, i)
+		if i == 0 {
+			p("%s := %s + constY", u[i], yv[i])
+		} else {
+			p("%s := bits.RotateLeft64(%s, %d)", u[i], yv[i], ry[i])
+		}
 	}
-	x3 := [][3]int{{3, 5, 6}, {2, 5, 6}, {2, 3, 5}, {0, 1, 4}, {0, 4, 7}, {1, 6, 7}, {2, 3, 4}, {0, 1, 7}}
-	for i, c := range x3 {
-		p("%s := %s ^ %s ^ %s", t(8+i), t(c[0]), t(c[1]), t(c[2]))
-	}
-	// the Y side reuses t0..t7: new names u0..u7
-	u := func(i int) string { return fmt.Sprintf("%s_u%d", tag, i) }
-	p("%s := constY + %s", u(0), sum(y, 0, 1, 2, 5, 7))
-	ys := [][]int{{0, 1, 3, 4, 6}, {0, 1, 2, 3, 5}, {2, 3, 4, 6, 7}, {0, 1, 3, 4, 5}, {2, 4, 5, 6, 7}, {1, 2, 5, 6, 7}, {0, 3, 4, 6, 7}}
-	ry := []int{10, 19, 29, 36, 44, 48, 55}
-	for i := range ys {
-		p("%s := bits.RotateLeft64(%s, %d)", u(i+1), sum(y, ys[i]...), ry[i])
-	}
-	zc := []struct {
-		out, t int
-		a      [3]int
-	}{{5, 8, [3]int{3, 4, 6}}, {6, 9, [3]int{2, 5, 7}}, {7, 10, [3]int{4, 6, 7}}, {0, 11, [3]int{0, 1, 5}}, {1, 12, [3]int{2, 6, 7}}, {2, 13, [3]int{0, 1, 3}}, {3, 14, [3]int{0, 3, 4}}, {4, 15, [3]int{1, 2, 5}}}
-	for _, c := range zc {
-		p("%s := %s + (%s ^ %s ^ %s)", z[c.out], t(c.t), u(c.a[0]), u(c.a[1]), u(c.a[2]))
+	// z[out] = t(8+k) + (u ^ u ^ u)
+	zo := []int{5, 6, 7, 0, 1, 2, 3, 4}
+	za := [][]int{{3, 4, 6}, {2, 5, 7}, {4, 6, 7}, {0, 1, 5}, {2, 6, 7}, {0, 1, 3}, {0, 3, 4}, {1, 2, 5}}
+	ux := emit(tag+"y", u, "^", za)
+	for k := range zo {
+		p("%s := %s + %s", z[zo[k]], tx[k], ux[k])
 	}
 }
 
@@ -80,7 +81,6 @@ func main() {
 	p("package edonr")
 	p("")
 	p(`import (`)
-	p(`"encoding/binary"`)
 	p(`"math/bits"`)
 	p(`)`)
 	p("")
@@ -88,9 +88,9 @@ func main() {
 	p("// Definition 8 expanded into eight quasigroup operations (Table 2.2). The halves")
 	p("// (c0, c1) enter R as (P1, P0).")
 	p("func (s *state) compress(blk []byte) {")
-	p("_ = blk[BlockSize-1]")
+	p("w := words(blk)")
 	for i := 0; i < 16; i++ {
-		p("m%d := binary.LittleEndian.Uint64(blk[%d:])", i, 8*i)
+		p("m%d := w[%d]", i, i)
 	}
 	a0 := [8]string{"m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7"}
 	a1 := [8]string{"m8", "m9", "m10", "m11", "m12", "m13", "m14", "m15"}
