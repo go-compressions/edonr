@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/hex"
+	"fmt"
 	"hash"
 	"math/rand"
 	"os"
@@ -240,4 +241,31 @@ func benchSum(b *testing.B, n int) {
 	for i := 0; i < b.N; i++ {
 		Sum(msg)
 	}
+}
+
+// BenchmarkOracle4K and BenchmarkOracle128K report the OpenZFS C oracle's
+// speed (EDONR_ORACLE required) under the same ns/op metric as Sum, so that
+// abbench and benchstat can compare them interleaved:
+//
+//	abbench --base e.test --head e.test --base-arg=-test.bench=Oracle4K \
+//	  --head-arg=-test.bench=Sum4K --rename-base Oracle4K=Sum4K --max-load 8 ...
+func BenchmarkOracle4K(b *testing.B)   { benchOracle(b, 4096) }
+func BenchmarkOracle128K(b *testing.B) { benchOracle(b, 128<<10) }
+
+func benchOracle(b *testing.B, n int) {
+	path := os.Getenv("EDONR_ORACLE")
+	if path == "" {
+		b.Skip("EDONR_ORACLE not set")
+	}
+	out, err := exec.Command(path, "--bench", strconv.Itoa(n)).Output()
+	if err != nil {
+		b.Fatal(err)
+	}
+	var mbps float64
+	if _, err := fmt.Sscanf(string(out), "%f MB/s", &mbps); err != nil {
+		b.Fatalf("oracle output %q: %v", out, err)
+	}
+	for i := 0; i < b.N; i++ {
+	}
+	b.ReportMetric(float64(n)/mbps*1e3, "ns/op")
 }
