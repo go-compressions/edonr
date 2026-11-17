@@ -104,10 +104,11 @@ against `edonr-oracle --bench` (the OpenZFS C code), via
 | 4 KiB   | 4.95 GB/s | 4.39 GB/s | 5.62 GB/s           | 0.89       | 1.13       |
 | 128 KiB | 5.18 GB/s | 4.61 GB/s | 6.16 GB/s           | 0.89       | 1.19       |
 
-`SumNParallel` is scheduled by `inflight.Ordered` (go-filesystems/inflight, the
-fleet's bounded parallel primitive); on the 16 cores of the M4 Max it reaches
-39 GB/s (4 KiB blocks; 44 GB/s with a private goroutine pool, the cost of the
-shared primitive being about 11 %). On
+`SumNParallel` is scheduled by `inflight.Each` (go-filesystems/inflight v0.4.0, the
+fleet's bounded parallel primitive, without the ordered hand-off that these
+self-writing chunks do not need); on the 16 cores of the M4 Max it reaches
+about 44 GB/s (4 KiB blocks), at parity with a private goroutine pool
+(inflight.Ordered measured 14 % below it). On
 an AMD Ryzen 9 7950X (no C oracle available there): scalar 2.7 GB/s, AVX2 x4
 5.7 GB/s, AVX-512 x8 11.6 GB/s per core.
 

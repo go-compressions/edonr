@@ -82,13 +82,13 @@ func (d *Digest) SumNParallel(dst [][Size]byte, msgs [][]byte, workers int) {
 	// bounded set of goroutines. Each chunk writes its own digests into dst, so
 	// there is nothing to emit; a chunk is a few groups, to amortise the
 	// scheduling and stay balanced when lengths differ.
-	chunk := max(1, groups/(workers*2))
+	chunk := max(1, groups/(workers*8))
 	items := (groups + chunk - 1) / chunk
-	_ = inflight.Ordered(context.Background(), items, workers,
-		func(_ context.Context, i int) (struct{}, error) {
+	_ = inflight.Each(context.Background(), items, workers,
+		func(_ context.Context, i int) error {
 			run(i*chunk, min((i+1)*chunk, groups))
-			return struct{}{}, nil
-		}, func(int, struct{}) error { return nil })
+			return nil
+		})
 }
 
 // SumNParallel is Digest.SumNParallel for the unkeyed hash.
