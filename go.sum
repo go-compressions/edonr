@@ -1,4 +1,4 @@
-github.com/go-filesystems/inflight v0.6.0 h1:6JoAXtIJD5X2ewj/wf7ZuIrTgoab01VTRXgo6wlpk5o=
-github.com/go-filesystems/inflight v0.6.0/go.mod h1:S8CMMqsFJit6z/rNukkiJ6Pyz1i7SNkXnyNZGmv6BEo=
+github.com/go-filesystems/inflight v0.7.0 h1:6ItsEp9YBYW8Kmj8h7FvuGkuaxZmY2+4iSqX8dT/Pdk=
+github.com/go-filesystems/inflight v0.7.0/go.mod h1:S8CMMqsFJit6z/rNukkiJ6Pyz1i7SNkXnyNZGmv6BEo=
 golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
 golang.org/x/sys v0.50.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
